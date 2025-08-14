@@ -1,0 +1,8 @@
+# ignore haskell intermediate compilation files
+*.hi
+
+# ignore object files
+*.o
+
+# ignore the scheme binary
+Scheme
