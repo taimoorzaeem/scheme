@@ -1,8 +1,13 @@
--- GOAL: Transform this into a step-by-step scheme expression evaluator.
---       This could be useful for teaching and learning purposes.
-{-# LANGUAGE ExistentialQuantification #-}
+-- Step-Scheme (WIP)
+-- ===========
+--   This is one-step scheme evaluator, which prints the evaluation
+--   of a scheme expression after every step. If the expression cannot
+--   be evaluated further i.e. it has reached its Normal Form the
+--   evaluation stops at it's normal form even if the resultant expression
+--   doesn't make sense.
 {-# LANGUAGE LambdaCase                #-}
-{-# OPTIONS_GHC -Wno-unused-do-bind #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# OPTIONS_GHC -Wno-unused-do-bind    #-}
 module Main where
 
 import Control.Monad.Except
@@ -102,8 +107,8 @@ parseQuoted = do
 
 
 parseExpr :: Parser LispVal
-parseExpr = parseAtom 
-         <|> parseString 
+parseExpr = parseAtom
+         <|> parseString
          <|> parseNumber
          <|> parseQuoted
          <|> do char '('
@@ -122,7 +127,7 @@ showVal (List contents) = "(" ++ unwordsList contents ++ ")"
 showVal (DottedList head' tail') = "(" ++ unwordsList head' ++ "." ++ showVal tail' ++ ")"
 showVal (PrimitiveFunc _) = "<primitive>"
 showVal (Func { params = args, vararg = varargs }) =
-          "(lambda (" ++ unwords (map show args) ++ 
+          "(lambda (" ++ unwords (map show args) ++
                   (case varargs of
                       Nothing -> ""
                       Just arg -> " . " ++ arg) ++ ") ...)"
@@ -136,19 +141,26 @@ unwordsList = unwords . map showVal
 
 instance Show LispVal where show = showVal
 
-
+-- | This is One Step Evaluation.
+-- TODO: Only If-expressions are evaluation using one step.
+--       Next, convert the function definitions and applications to one-step.
+-- Example evaluation:
+-- ==================
+--   (if (if #t #f #t) 2 3)  -->  (if #f 2 3)
+--   (if (if #f 'pie 'waffle) 2 3)  -->  (if (quote waffle) 2 3)   <- (Reached its Normal Form)
 eval :: Env -> LispVal -> ExceptT LispError IO LispVal
 eval _   val@(String _) = return val
 eval _   val@(Number _) = return val
 eval _   val@(Bool _) = return val
 eval env (Atom id') = getVar env id'
-eval _   (List [Atom "quote", val]) = return val
+eval _   (List [Atom "quote", val]) = return $ List [Atom "quote", val]
 eval env (List [Atom "if", pred', conseq, alt]) = do
-    result <- eval env pred'
-    case result of 
-      Bool True -> eval env conseq
-      Bool False -> eval env alt
-      _ -> throwE $ TypeMismatch "bool" result
+    case pred' of
+      Bool True -> return conseq
+      Bool False -> return alt
+      pred'' -> do
+        pred''' <- eval env pred''
+        return (List [Atom "if", pred''', conseq, alt])
 eval env (List [Atom "set!", Atom var, form]) = eval env form >>= setVar env var
 eval env (List [Atom "define", Atom var, form]) = eval env form >>= defineVar env var
 eval env (List (Atom "define" : List (Atom var : params) : body)) =
@@ -167,13 +179,13 @@ eval env (List (function : args)) = do
     apply func argVals
 eval _ badForm = throwE $ BadSpecialForm "Unrecognized special form" badForm
 
-
+-- | Apply args to function. This is Applicative Order Evaluation.
 apply :: LispVal -> [LispVal] -> ExceptT LispError IO LispVal
 apply (PrimitiveFunc func) args = liftThrows $ func args
 apply (Func params varargs body closure) args =
   if num params /= num args && isNothing varargs
     then throwE $ NumArgs (num params) args
-    else liftIO (bindVars closure $ zip params args) >>= 
+    else liftIO (bindVars closure $ zip params args) >>=
         bindVarArgs varargs >>= evalBody
       where
         remainingArgs = drop (length params) args
@@ -285,7 +297,7 @@ eqv [Number arg1, Number arg2] = return $ Bool $ arg1 == arg2
 eqv [String arg1, String arg2] = return $ Bool $ arg1 == arg2
 eqv [Atom arg1, Atom arg2] = return $ Bool $ arg1 == arg2
 eqv [DottedList xs x, DottedList ys y] = eqv [List $ xs ++ [x], List $ ys ++ [y]]
-eqv [List arg1, List arg2] = 
+eqv [List arg1, List arg2] =
   return $ Bool $ (length arg1 == length arg2) && all eqvPair (zip arg1 arg2)
     where
       eqvPair (x1, x2) = case eqv [x1, x2] of
@@ -362,8 +374,23 @@ evalString :: Env -> String -> IO String
 evalString env expr = runIOThrows $ show <$> (liftThrows (readExpr expr) >>= eval env)
 
 
+-- | Evaluate scheme expression until it reaches its normal form.
+-- Example:
+-- =======
+-- >>> (if (if #t #f #f) 10 20)  -->  (if #f 10 20)  -->  20
+-- >>> (if (if #f
 evalAndPrint :: Env -> String -> IO ()
-evalAndPrint env expr = evalString env expr >>= putStrLn
+evalAndPrint env expr = evalLoop env expr
+  where
+    evalLoop :: Env -> String -> IO ()
+    evalLoop env expr = do
+      res <- evalString env expr
+      putStrLn $ "> " <> res
+      nextRes <- evalString env res
+      if res == nextRes
+        then return ()
+        else do
+          evalLoop env res
 
 
 until_ :: Monad m => (a -> Bool) -> m a -> (a -> m ()) -> m ()
@@ -412,16 +439,16 @@ isBound envRef var = readIORef envRef >>= return . isJust . lookup var
 getVar :: Env -> String -> ExceptT LispError IO LispVal
 getVar envRef var = do
     env <- liftIO $ readIORef envRef
-    maybe (throwError $ UnboundVar "Getting an unbound variable" var) 
-          (liftIO . readIORef) 
+    maybe (throwError $ UnboundVar "Getting an unbound variable" var)
+          (liftIO . readIORef)
           (lookup var env)
 
 
 setVar :: Env -> String -> LispVal -> ExceptT LispError IO LispVal
 setVar envRef var value = do
     env <- liftIO $ readIORef envRef
-    maybe (throwError $ UnboundVar "Setting an unbound variable" var) 
-          (liftIO . (`writeIORef` value)) 
+    maybe (throwError $ UnboundVar "Setting an unbound variable" var)
+          (liftIO . (`writeIORef` value))
           (lookup var env)
     return value
 
@@ -439,12 +466,12 @@ defineVar envRef var value = do
 
 
 bindVars :: Env -> [(String, LispVal)] -> IO Env
-bindVars envRef bindings = 
+bindVars envRef bindings =
   readIORef envRef >>= extendEnv >>= newIORef
     where
       extendEnv env = fmap (++ env) (mapM addBinding bindings)
 
-      addBinding (var, value) = do 
+      addBinding (var, value) = do
         ref <- newIORef value
         return (var, ref)
 
