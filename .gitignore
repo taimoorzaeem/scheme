@@ -1,8 +1,24 @@
-# ignore haskell intermediate compilation files
-*.hi
-
-# ignore object files
+dist
+dist-*
+cabal-dev
 *.o
-
-# ignore the scheme binary
-Scheme
+*.hi
+*.hie
+*.chi
+*.chs.h
+*.dyn_o
+*.dyn_hi
+.hpc
+.hsenv
+.cabal-sandbox/
+cabal.sandbox.config
+*.prof
+*.aux
+*.hp
+*.eventlog
+.stack-work/
+cabal.project.local
+cabal.project.local~
+.HTF/
+.ghc.environment.*
+*.swp
