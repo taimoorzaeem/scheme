@@ -5,15 +5,17 @@
 --   be evaluated further i.e. it has reached its Normal Form the
 --   evaluation stops at it's normal form even if the resultant expression
 --   doesn't make sense.
+-- TODO: Add regression tests.
 {-# LANGUAGE ExistentialQuantification #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind    #-}
 module Language.Scheme.StepScheme
   (runRepl)
   where
 
-import System.IO
+import Data.Either (rights)
 import Text.ParserCombinators.Parsec hiding (spaces)
 
+import System.IO
 import Prelude
 
 symbol :: Parser Char
@@ -88,6 +90,9 @@ parseExpr = try parseAtom -- used try for backtracking
                 char ')'
                 return x
 
+isNumber :: LispVal -> Bool
+isNumber (Number _) = True
+isNumber _          = False
 
 showVal :: LispVal -> String
 showVal (String contents) = "\"" ++ contents ++ "\""
@@ -124,6 +129,25 @@ eval (List [Atom "if", pred', conseq, alt]) = do
       pred'' -> do
         pred''' <- eval pred''
         return (List [Atom "if", pred''', conseq, alt])
+-- TODO: These look horrible, refactor all primitive operations into separate
+--       functions
+eval (List (Atom "+":args)) =
+  if not (all isNumber args) then
+    return $ List (Atom "+" : rights (map eval args))
+  else
+    return $ sumNumbers args
+  where
+    sumNumbers :: [LispVal] -> LispVal
+    sumNumbers nums = Number $ sum [ x | (Number x) <- nums]
+eval (List (Atom "*":args)) = do
+  if not (all isNumber args) then
+    return $ List (Atom "+" : rights (map eval args))
+  else
+    return $ productNumbers args
+  where
+    productNumbers :: [LispVal] -> LispVal
+    productNumbers nums = Number $ product [ x | (Number x) <- nums]
+
 eval badForm = Left $ Default $ "evaluation error: " <> show badForm
 
 data LispError = Parser ParseError
